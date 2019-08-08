@@ -67,7 +67,7 @@
 //     ctx := context.WithValue(context.Background(), oauth.HTTPClient, hc)
 //     c := oauth.Client{ /* Any settings */ }
 //     resp, err := c.GetContext(ctx, &oauth.Credentials{}, rawurl, nil)
-package oauth // import "github.com/gomodule/oauth1/oauth"
+package oauth // import "github.com/titasp/oauth1/oauth"
 
 import (
 	"bytes"
