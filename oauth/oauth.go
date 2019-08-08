@@ -77,6 +77,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -248,8 +249,12 @@ func (sm SignatureMethod) String() string {
 	switch sm {
 	case RSASHA1:
 		return "RSA-SHA1"
+	case RSASHA256:
+		return "RSA-SHA256"
 	case HMACSHA1:
 		return "HMAC-SHA1"
+	case HMACSHA256:
+		return "HMAC-SHA256"
 	case PLAINTEXT:
 		return "PLAINTEXT"
 	default:
@@ -258,9 +263,11 @@ func (sm SignatureMethod) String() string {
 }
 
 const (
-	HMACSHA1  SignatureMethod = iota // HMAC-SHA1
-	RSASHA1                          // RSA-SHA1
-	PLAINTEXT                        // Plain text
+	HMACSHA1   SignatureMethod = iota // HMAC-SHA1
+	HMACSHA256                        // HMAC-SHA256
+	RSASHA1                           // RSA-SHA1
+	RSASHA256                         // RSA-SHA256
+	PLAINTEXT                         // Plain text
 )
 
 // Credentials represents client, temporary and token credentials.
@@ -324,6 +331,7 @@ type request struct {
 	verifier      string
 	sessionHandle string
 	callbackURL   string
+	bodyHash      string
 }
 
 var testHook = func(map[string]string) {}
@@ -337,6 +345,10 @@ func (c *Client) oauthParams(r *request) (map[string]string, error) {
 		"oauth_consumer_key":     c.Credentials.Token,
 		"oauth_signature_method": c.SignatureMethod.String(),
 		"oauth_version":          "1.0",
+	}
+
+	if r.bodyHash != "" {
+		oauthParams["oauth_body_hash"] = r.bodyHash
 	}
 
 	if c.SignatureMethod != PLAINTEXT {
@@ -374,6 +386,15 @@ func (c *Client) oauthParams(r *request) (map[string]string, error) {
 		h := hmac.New(sha1.New, key)
 		writeBaseString(h, r.method, r.u, r.form, oauthParams)
 		signature = base64.StdEncoding.EncodeToString(h.Sum(key[:0]))
+	case HMACSHA256:
+		key := encode(c.Credentials.Secret, false)
+		key = append(key, '&')
+		if r.credentials != nil {
+			key = append(key, encode(r.credentials.Secret, false)...)
+		}
+		h := hmac.New(sha256.New, key)
+		writeBaseString(h, r.method, r.u, r.form, oauthParams)
+		signature = base64.StdEncoding.EncodeToString(h.Sum(key[:0]))
 	case RSASHA1:
 		if c.PrivateKey == nil {
 			return nil, errors.New("oauth: private key not set")
@@ -381,6 +402,17 @@ func (c *Client) oauthParams(r *request) (map[string]string, error) {
 		h := sha1.New()
 		writeBaseString(h, r.method, r.u, r.form, oauthParams)
 		rawSignature, err := rsa.SignPKCS1v15(rand.Reader, c.PrivateKey, crypto.SHA1, h.Sum(nil))
+		if err != nil {
+			return nil, err
+		}
+		signature = base64.StdEncoding.EncodeToString(rawSignature)
+	case RSASHA256:
+		if c.PrivateKey == nil {
+			return nil, errors.New("oauth: private key not set")
+		}
+		h := sha256.New()
+		writeBaseString(h, r.method, r.u, r.form, oauthParams)
+		rawSignature, err := rsa.SignPKCS1v15(rand.Reader, c.PrivateKey, crypto.SHA256, h.Sum(nil))
 		if err != nil {
 			return nil, err
 		}
@@ -436,6 +468,7 @@ func (c *Client) SignParam(credentials *Credentials, method, urlStr string, para
 }
 
 var oauthKeys = []string{
+	"oauth_body_hash",
 	"oauth_consumer_key",
 	"oauth_nonce",
 	"oauth_signature",
@@ -488,6 +521,15 @@ func (c *Client) AuthorizationHeader(credentials *Credentials, method string, u 
 // transmitting OAuth parameters in an HTTP request header.
 func (c *Client) SetAuthorizationHeader(header http.Header, credentials *Credentials, method string, u *url.URL, form url.Values) error {
 	v, err := c.authorizationHeader(&request{credentials: credentials, method: method, u: u, form: form})
+	if err != nil {
+		return err
+	}
+	header.Set("Authorization", v)
+	return nil
+}
+
+func (c *Client) SetAuthorizationHeaderWithBodyHash(header http.Header, credentials *Credentials, method string, u *url.URL, form url.Values, bodyHash string) error {
+	v, err := c.authorizationHeader(&request{credentials: credentials, method: method, u: u, form: form, bodyHash: bodyHash})
 	if err != nil {
 		return err
 	}
